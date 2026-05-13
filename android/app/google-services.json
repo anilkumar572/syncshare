@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "497463857878",
+    "project_id": "sharesync-56711",
+    "storage_bucket": "sharesync-56711.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:497463857878:android:67f8002c4280e90e0eef77",
+        "android_client_info": {
+          "package_name": "com.example.sharesyncapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB-fO7NIwD_fMZRoCMBpfw_Oo_5YOAVJOk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
