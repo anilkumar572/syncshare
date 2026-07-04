@@ -30,3 +30,10 @@ unfamiliar.
   the `sharesync-56711` Firebase project, so the web app initializes Firebase on
   load. Creating a room writes to Firestore; an actual end-to-end file transfer
   needs a second peer to join the room and working STUN/TURN connectivity.
+- **Known external blocker**: "Create Room"/"Join Room" currently fail with
+  `[cloud_firestore/permission-denied] Missing or insufficient permissions`
+  (visible in the browser console). This is driven by the external
+  `sharesync-56711` Firestore security rules, not by the code or local
+  environment. Exercising the signaling/transfer flow end to end requires the
+  Firebase project owner to relax the Firestore rules for the `rooms`
+  collection (or provide credentials for a project you control).
