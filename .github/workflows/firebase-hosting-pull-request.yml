@@ -1,0 +1,41 @@
+# Builds the Flutter web app and deploys it to a temporary Firebase Hosting
+# preview channel for every pull request, so changes can be reviewed on a live
+# URL before they are merged.
+name: Deploy to Firebase Hosting on PR
+
+on: pull_request
+
+# A PR from a fork does not have access to repository secrets, so the deploy
+# step is skipped there (the build step still runs as a sanity check).
+permissions:
+  checks: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  build_and_preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.4
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build web (release)
+        run: flutter build web --release
+
+      - name: Deploy to Firebase Hosting (preview channel)
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711 }}
+          projectId: sharesync-56711
