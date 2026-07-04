@@ -19,21 +19,29 @@ unfamiliar.
   `flutter run -d web-server --web-port 8080 --web-hostname 0.0.0.0`
   then open `http://localhost:8080` in Chrome. The first web build is slow
   (~compiles for a minute); subsequent hot reloads are fast.
-- **`flutter test` currently fails**: `test/widget_test.dart` is the unmodified
-  Flutter "counter" boilerplate and does not match this app (it looks for a
-  counter that doesn't exist). This is a pre-existing code issue, not an
-  environment problem — the test runner itself works.
+- **`flutter test` passes**: `test/widget_test.dart` is a minimal smoke test
+  (it only constructs the top-level `ShareSyncApp` widget, because the main
+  screen initializes WebRTC/Firebase plugins that aren't available in the plain
+  `flutter test` VM).
 - **`flutter analyze` passes** (exit 0) but reports pre-existing warnings/infos
-  (e.g. runtime packages declared under `dev_dependencies` in `pubspec.yaml`,
-  unused imports). These are not environment issues.
-- **Firebase / signaling**: `lib/firebase_options.dart` ships real config for
-  the `sharesync-56711` Firebase project, so the web app initializes Firebase on
-  load. Creating a room writes to Firestore; an actual end-to-end file transfer
-  needs a second peer to join the room and working STUN/TURN connectivity.
-- **Known external blocker**: "Create Room"/"Join Room" currently fail with
-  `[cloud_firestore/permission-denied] Missing or insufficient permissions`
-  (visible in the browser console). This is driven by the external
-  `sharesync-56711` Firestore security rules, not by the code or local
-  environment. Exercising the signaling/transfer flow end to end requires the
-  Firebase project owner to relax the Firestore rules for the `rooms`
-  collection (or provide credentials for a project you control).
+  (e.g. runtime packages declared under `dev_dependencies` in `pubspec.yaml`).
+  These are not environment issues.
+- **Signaling flow**: `SignalingService` (`lib/servises/singnaling_service.dart`)
+  brokers the WebRTC handshake through Firestore. The caller (`createRoom`)
+  publishes an offer and then listens for the callee's `answer` + ICE
+  candidates; the callee (`joinRoom`) answers and listens for the caller's ICE
+  candidates. Both sides must listen or the connection never completes.
+- **File transfer is cross-platform**: on web it uses `PlatformFile.bytes` and
+  triggers a browser download (`lib/logic/received_file_saver_web.dart`); on
+  native it streams to disk via `path_provider`
+  (`lib/logic/received_file_saver_io.dart`). The correct implementation is
+  chosen with a conditional import in `received_file_saver.dart`.
+- **Production Firestore rules block writes**: `lib/firebase_options.dart` points
+  at the real `sharesync-56711` project, whose rules currently reject
+  `rooms` writes (`[cloud_firestore/permission-denied]`). To exercise the full
+  create-room → join → transfer flow locally, run the Firestore emulator
+  (`firebase emulators:start --only firestore`, Java is installed) and
+  temporarily add `FirebaseFirestore.instance.useFirestoreEmulator('localhost', 8081);`
+  after `Firebase.initializeApp(...)` in `lib/main.dart` (revert before
+  committing). Two browser tabs on the same origin connect via loopback ICE
+  without needing a TURN server.
