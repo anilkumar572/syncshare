@@ -66,7 +66,9 @@ class _TransferScreenState extends State<TransferScreen> {
 
   // SENDER: Create a room and a data channel
   void _createRoom() async {
-    RTCDataChannelInit dataChannelDict = RTCDataChannelInit();
+    final dataChannelDict = RTCDataChannelInit()
+      ..ordered = true
+      ..maxRetransmits = null;
     _dataChannel = await _peerConnection!.createDataChannel(
       "fileTransfer",
       dataChannelDict,
