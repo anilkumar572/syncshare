@@ -28,6 +28,10 @@ setup_service_account() {
     sa_json="$FIREBASE_SERVICE_ACCOUNT_JSON"
   elif [[ -n "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ]]; then
     sa_json="$GOOGLE_APPLICATION_CREDENTIALS_JSON"
+  elif [[ -n "${SERVICE_ACCOUNT_JSON:-}" ]]; then
+    sa_json="$SERVICE_ACCOUNT_JSON"
+  elif [[ -n "${GCP_SA_KEY:-}" ]]; then
+    sa_json="$GCP_SA_KEY"
   fi
 
   if [[ -n "$sa_json" ]]; then

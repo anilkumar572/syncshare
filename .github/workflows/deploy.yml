@@ -30,9 +30,11 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+          SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
-          SA_JSON="${FIREBASE_SERVICE_ACCOUNT:-${FIREBASE_SERVICE_ACCOUNT_JSON:-$GOOGLE_APPLICATION_CREDENTIALS_JSON}}"
+          SA_JSON="${FIREBASE_SERVICE_ACCOUNT:-${FIREBASE_SERVICE_ACCOUNT_JSON:-${GOOGLE_APPLICATION_CREDENTIALS_JSON:-${SERVICE_ACCOUNT_JSON:-$GCP_SA_KEY}}}}"
 
           if [ -n "$SA_JSON" ]; then
             echo "$SA_JSON" > "$RUNNER_TEMP/firebase-service-account.json"
@@ -42,8 +44,9 @@ jobs:
             echo "FIREBASE_TOKEN is set; deploy script will use token auth."
           else
             echo "::error::No Firebase credentials found in GitHub secrets."
-            echo "Add your service account JSON as secret FIREBASE_SERVICE_ACCOUNT"
-            echo "(paste full .json file contents), or set FIREBASE_TOKEN."
+            echo "Add your service account JSON (full file contents) as one of:"
+            echo "FIREBASE_SERVICE_ACCOUNT, FIREBASE_SERVICE_ACCOUNT_JSON,"
+            echo "GOOGLE_APPLICATION_CREDENTIALS_JSON, SERVICE_ACCOUNT_JSON, GCP_SA_KEY"
             exit 1
           fi
 
@@ -53,4 +56,6 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+          SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         run: npm run deploy
