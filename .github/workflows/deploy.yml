@@ -16,24 +16,41 @@ jobs:
         with:
           channel: stable
 
-      - name: Install dependencies
+      - name: Install Node dependencies
+        run: npm install
+
+      - name: Install Flutter dependencies
         run: flutter pub get
 
       - name: Build web
         run: flutter build web --release --no-wasm-dry-run
 
-      - name: Validate Firebase token
+      - name: Authenticate with Firebase service account
         env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
-          if [ -z "$FIREBASE_TOKEN" ]; then
-            echo "::error::Missing FIREBASE_TOKEN GitHub secret."
-            echo "Run 'npx firebase login:ci' locally, then add the token at:"
-            echo "https://github.com/${{ github.repository }}/settings/secrets/actions"
+          SA_JSON="${FIREBASE_SERVICE_ACCOUNT:-${FIREBASE_SERVICE_ACCOUNT_JSON:-$GOOGLE_APPLICATION_CREDENTIALS_JSON}}"
+
+          if [ -n "$SA_JSON" ]; then
+            echo "$SA_JSON" > "$RUNNER_TEMP/firebase-service-account.json"
+            echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
+            echo "Authenticated with service account JSON secret."
+          elif [ -n "$FIREBASE_TOKEN" ]; then
+            echo "FIREBASE_TOKEN is set; deploy script will use token auth."
+          else
+            echo "::error::No Firebase credentials found in GitHub secrets."
+            echo "Add your service account JSON as secret FIREBASE_SERVICE_ACCOUNT"
+            echo "(paste full .json file contents), or set FIREBASE_TOKEN."
             exit 1
           fi
 
       - name: Deploy to Firebase
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
         run: npm run deploy
