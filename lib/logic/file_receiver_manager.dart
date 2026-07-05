@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
@@ -10,56 +9,75 @@ class FileReceiverManager {
   int _receivedSize = 0;
   int _totalSize = 0;
   String? _fileName;
+  double _lastReportedProgress = -1;
+  DateTime _lastProgressUpdate = DateTime.fromMillisecondsSinceEpoch(0);
 
-  // Callback to update UI
   final Function(double progress, String status, String? filePath) onStatusUpdate;
 
   FileReceiverManager({required this.onStatusUpdate});
 
   void handleIncomingMessage(RTCDataChannelMessage message) async {
     if (message.isBinary) {
-      // 1. RECEIVE BINARY CHUNK
       if (_fileSink != null) {
         _fileSink!.add(message.binary);
         _receivedSize += message.binary.length;
-        
-        double progress = _totalSize > 0 ? (_receivedSize / _totalSize) : 0;
-        onStatusUpdate(progress, "Receiving...", null);
+        _maybeReportProgress("Receiving...");
       }
-    } else {
-      // 2. RECEIVE TEXT COMMAND (JSON)
-      Map<String, dynamic> data = jsonDecode(message.text);
-
-      if (data['type'] == 'meta') {
-        // Prepare for new file
-        _fileName = data['name'];
-        _totalSize = data['size'];
-        _receivedSize = 0;
-
-        // Get directory to save (Downloads or Documents)
-        Directory? directory;
-        if (Platform.isAndroid) {
-          directory = Directory('/storage/emulated/0/Download');
-          if (!await directory.exists()) directory = await getExternalStorageDirectory();
-        } else {
-          directory = await getApplicationDocumentsDirectory();
-        }
-
-        _receivedFile = File('${directory!.path}/$_fileName');
-        _fileSink = _receivedFile!.openWrite();
-        
-        onStatusUpdate(0.0, "Starting download: $_fileName", null);
-        print("Saving to: ${_receivedFile!.path}");
-
-      } else if (data['type'] == 'eof') {
-        // 3. FINISH FILE
-        await _fileSink?.flush();
-        await _fileSink?.close();
-        _fileSink = null;
-        
-        onStatusUpdate(1.0, "File Saved!", _receivedFile!.path);
-      }
+      return;
     }
+
+    final data = jsonDecode(message.text) as Map<String, dynamic>;
+
+    if (data['type'] == 'meta') {
+      _fileName = data['name'] as String;
+      _totalSize = data['size'] as int;
+      _receivedSize = 0;
+      _lastReportedProgress = -1;
+
+      Directory? directory;
+      if (Platform.isAndroid) {
+        directory = Directory('/storage/emulated/0/Download');
+        if (!await directory.exists()) {
+          directory = await getExternalStorageDirectory();
+        }
+      } else {
+        directory = await getApplicationDocumentsDirectory();
+      }
+
+      _receivedFile = File('${directory!.path}/$_fileName');
+      _fileSink = _receivedFile!.openWrite();
+
+      onStatusUpdate(0.0, "Starting download: $_fileName", null);
+    } else if (data['type'] == 'eof') {
+      await _fileSink?.flush();
+      await _fileSink?.close();
+      _fileSink = null;
+
+      if (_totalSize > 0 && _receivedSize != _totalSize) {
+        onStatusUpdate(
+          1.0,
+          "Warning: size mismatch ($_receivedSize / $_totalSize bytes)",
+          _receivedFile?.path,
+        );
+        return;
+      }
+
+      onStatusUpdate(1.0, "File Saved!", _receivedFile!.path);
+    }
+  }
+
+  void _maybeReportProgress(String status) {
+    final progress = _totalSize > 0 ? (_receivedSize / _totalSize) : 0.0;
+    final now = DateTime.now();
+
+    if (progress - _lastReportedProgress < 0.01 &&
+        now.difference(_lastProgressUpdate).inMilliseconds < 200) {
+      return;
+    }
+
+    _lastReportedProgress = progress;
+    _lastProgressUpdate = now;
+    onStatusUpdate(progress, status, null);
   }
 
   void dispose() {
