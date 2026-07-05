@@ -1,7 +1,7 @@
-import 'dart:io';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 class FileTransferManager {
@@ -13,10 +13,25 @@ class FileTransferManager {
 
   FileTransferManager(this.dataChannel);
 
-  Future<void> sendLargeFile(File file, Function(double) onProgress) async {
-    final totalSize = await file.length();
-    final name = file.path.split('/').last;
+  Future<void> sendFromBytes(
+    Uint8List bytes,
+    String name,
+    void Function(double) onProgress,
+  ) {
+    return sendFromStream(
+      _chunkBytes(bytes),
+      bytes.length,
+      name,
+      onProgress,
+    );
+  }
 
+  Future<void> sendFromStream(
+    Stream<List<int>> stream,
+    int totalSize,
+    String name,
+    void Function(double) onProgress,
+  ) async {
     dataChannel.bufferedAmountLowThreshold = bufferLowThreshold;
 
     dataChannel.send(
@@ -29,14 +44,14 @@ class FileTransferManager {
     var lastReportedProgress = -1.0;
     var lastProgressUpdate = DateTime.fromMillisecondsSinceEpoch(0);
 
-    await for (final chunk in file.openRead(0, chunkSize)) {
+    await for (final chunk in stream) {
       await _waitForSendCapacity();
 
       final bytes = chunk is Uint8List ? chunk : Uint8List.fromList(chunk);
       dataChannel.send(RTCDataChannelMessage.fromBinary(bytes));
       sent += bytes.length;
 
-      final progress = sent / totalSize;
+      final progress = totalSize > 0 ? sent / totalSize : 1.0;
       final now = DateTime.now();
       if (progress >= 1.0 ||
           progress - lastReportedProgress >= 0.01 ||
@@ -49,6 +64,15 @@ class FileTransferManager {
 
     onProgress(1.0);
     dataChannel.send(RTCDataChannelMessage(jsonEncode({"type": "eof"})));
+  }
+
+  Stream<List<int>> _chunkBytes(Uint8List bytes) async* {
+    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+      final end = (offset + chunkSize > bytes.length)
+          ? bytes.length
+          : offset + chunkSize;
+      yield bytes.sublist(offset, end);
+    }
   }
 
   Future<void> _waitForSendCapacity() async {

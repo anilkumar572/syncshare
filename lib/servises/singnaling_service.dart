@@ -54,7 +54,8 @@ class SignalingService {
     var answerApplied = false;
 
     roomRef.snapshots().listen((snapshot) async {
-      final answer = snapshot.data()?['answer'] as Map<String, dynamic>?;
+      final data = snapshot.data() as Map<String, dynamic>?;
+      final answer = data?['answer'] as Map<String, dynamic>?;
       if (answer == null || answerApplied) {
         return;
       }
