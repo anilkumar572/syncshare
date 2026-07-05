@@ -2,7 +2,11 @@
   "name": "sharesyncapp",
   "private": true,
   "scripts": {
-    "deploy": "firebase deploy --only hosting,firestore:rules"
+    "deploy": "bash scripts/deploy.sh",
+    "deploy:rules": "bash scripts/deploy.sh firestore:rules",
+    "deploy:hosting": "bash scripts/deploy.sh hosting",
+    "firebase:login": "firebase login",
+    "firebase:login:ci": "firebase login:ci"
   },
   "devDependencies": {
     "firebase-tools": "^13.35.1"
