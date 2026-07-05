@@ -1,0 +1,47 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /rooms/{roomId} {
+      allow create: if validRoomCreate();
+      allow read: if true;
+      allow update: if validRoomUpdate();
+      allow delete: if true;
+
+      match /callerCandidates/{candidateId} {
+        allow read, create: if validIceCandidate();
+      }
+
+      match /calleeCandidates/{candidateId} {
+        allow read, create: if validIceCandidate();
+      }
+    }
+
+    function validSdpSession(data) {
+      return data is map
+        && data.keys().hasAll(['sdp', 'type'])
+        && data.sdp is string
+        && data.sdp.size() > 0
+        && data.type in ['offer', 'answer'];
+    }
+
+    function validIceCandidate() {
+      return request.resource.data.keys().hasAll(['candidate'])
+        && request.resource.data.candidate is string
+        && request.resource.data.candidate.size() > 0;
+    }
+
+    function validRoomCreate() {
+      return request.resource.data.keys().hasOnly(['offer'])
+        && validSdpSession(request.resource.data.offer);
+    }
+
+    function validRoomUpdate() {
+      return resource.data.keys().hasAll(['offer'])
+        && !('answer' in resource.data)
+        && request.resource.data.keys().hasAll(['offer', 'answer'])
+        && request.resource.data.offer == resource.data.offer
+        && validSdpSession(request.resource.data.answer);
+    }
+  }
+}

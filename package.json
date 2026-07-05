@@ -1,0 +1,10 @@
+{
+  "name": "sharesyncapp",
+  "private": true,
+  "scripts": {
+    "deploy": "firebase deploy --only hosting,firestore:rules"
+  },
+  "devDependencies": {
+    "firebase-tools": "^13.35.1"
+  }
+}
