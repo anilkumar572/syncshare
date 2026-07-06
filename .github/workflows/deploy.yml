@@ -16,15 +16,46 @@ jobs:
         with:
           channel: stable
 
-      - name: Install dependencies
+      - name: Install Node dependencies
+        run: npm install
+
+      - name: Install Flutter dependencies
         run: flutter pub get
 
       - name: Build web
         run: flutter build web --release --no-wasm-dry-run
 
-      - name: Deploy to Firebase
+      - name: Authenticate with Firebase service account
         env:
+          FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711 }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+          SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
-          npm install -g firebase-tools
-          firebase deploy --only hosting,firestore:rules --token "$FIREBASE_TOKEN"
+          SA_JSON="${FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711:-${FIREBASE_SERVICE_ACCOUNT:-${FIREBASE_SERVICE_ACCOUNT_JSON:-${GOOGLE_APPLICATION_CREDENTIALS_JSON:-${SERVICE_ACCOUNT_JSON:-$GCP_SA_KEY}}}}}}"
+
+          if [ -n "$SA_JSON" ]; then
+            echo "$SA_JSON" > "$RUNNER_TEMP/firebase-service-account.json"
+            echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
+            echo "Authenticated with service account JSON secret."
+          elif [ -n "$FIREBASE_TOKEN" ]; then
+            echo "FIREBASE_TOKEN is set; deploy script will use token auth."
+          else
+            echo "::error::No Firebase credentials found in GitHub secrets."
+            echo "Expected secret: FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711"
+            exit 1
+          fi
+
+      - name: Deploy to Firebase
+        env:
+          FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711 }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+          SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: npm run deploy
