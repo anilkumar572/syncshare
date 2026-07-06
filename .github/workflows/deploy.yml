@@ -25,37 +25,33 @@ jobs:
       - name: Build web
         run: flutter build web --release --no-wasm-dry-run
 
-      - name: Authenticate with Firebase service account
+      - name: Deploy Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711 }}
+          channelId: live
+          projectId: sharesync-56711
+
+      - name: Authenticate for Firestore rules
         env:
           FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711 }}
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
-          SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
-          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
-          SA_JSON="${FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711:-${FIREBASE_SERVICE_ACCOUNT:-${FIREBASE_SERVICE_ACCOUNT_JSON:-${GOOGLE_APPLICATION_CREDENTIALS_JSON:-${SERVICE_ACCOUNT_JSON:-$GCP_SA_KEY}}}}}}"
+          echo "$FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711" > "$RUNNER_TEMP/firebase-service-account.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
 
-          if [ -n "$SA_JSON" ]; then
-            echo "$SA_JSON" > "$RUNNER_TEMP/firebase-service-account.json"
-            echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
-            echo "Authenticated with service account JSON secret."
-          elif [ -n "$FIREBASE_TOKEN" ]; then
-            echo "FIREBASE_TOKEN is set; deploy script will use token auth."
-          else
-            echo "::error::No Firebase credentials found in GitHub secrets."
-            echo "Expected secret: FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711"
-            exit 1
-          fi
-
-      - name: Deploy to Firebase
+      - name: Deploy Firestore rules
+        id: firestore_rules
+        continue-on-error: true
         env:
           FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711 }}
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
-          SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
-          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
-        run: npm run deploy
+        run: npm run deploy:rules
+
+      - name: Firestore rules permission notice
+        if: steps.firestore_rules.outcome == 'failure'
+        run: |
+          echo "::warning::Firestore rules deploy failed (403 permission denied)."
+          echo "Add Firebase Rules Admin role to your service account:"
+          echo "https://console.cloud.google.com/iam-admin/iam?project=sharesync-56711"
+          echo "Or publish firestore.rules manually:"
+          echo "https://console.firebase.google.com/project/sharesync-56711/firestore/rules"
