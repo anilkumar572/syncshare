@@ -6,11 +6,13 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:sharesyncapp/logic/file_receiver_manager.dart';
 import 'package:sharesyncapp/logic/file_transfer_manager.dart';
 import 'package:sharesyncapp/logic/file_transfer_platform.dart';
+import 'package:sharesyncapp/logic/received_file.dart';
 import 'package:sharesyncapp/servises/singnaling_service.dart';
 import 'package:sharesyncapp/theme/app_theme.dart';
 import 'package:sharesyncapp/widgets/animated_progress_section.dart';
 import 'package:sharesyncapp/widgets/animated_status_chip.dart';
 import 'package:sharesyncapp/widgets/glass_card.dart';
+import 'package:sharesyncapp/widgets/room_code_display.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 class TransferScreen extends StatefulWidget {
@@ -36,9 +38,10 @@ class _TransferScreenState extends State<TransferScreen>
   double progress = 0;
   bool isTransferring = false;
   bool isConnecting = false;
+  bool isHost = false;
   String status = 'Ready to connect';
   bool isConnected = false;
-  String? savedPath;
+  ReceivedFile? receivedFile;
 
   @override
   void initState() {
@@ -79,26 +82,21 @@ class _TransferScreenState extends State<TransferScreen>
 
     _peerConnection!.onConnectionState = (state) {
       setState(() {
-        status = 'Connection: ${_formatState(state.name)}';
-        isConnecting = state ==
-                RTCPeerConnectionState.RTCPeerConnectionStateConnecting ||
-            state == RTCPeerConnectionState.RTCPeerConnectionStateNew;
+        isConnecting =
+            state == RTCPeerConnectionState.RTCPeerConnectionStateConnecting;
         isConnected =
             state == RTCPeerConnectionState.RTCPeerConnectionStateConnected;
+        if (isConnected) {
+          status = 'Connected';
+        }
       });
     };
-  }
-
-  String _formatState(String raw) {
-    return raw
-        .replaceAll('RTCPeerConnectionState', '')
-        .replaceAll('_', ' ')
-        .trim();
   }
 
   Future<void> _createRoom() async {
     setState(() {
       isConnecting = true;
+      isHost = true;
       status = 'Creating room...';
     });
 
@@ -114,29 +112,40 @@ class _TransferScreenState extends State<TransferScreen>
       final id = await signaling.createRoom(_peerConnection!);
       setState(() {
         roomId = id;
-        roomIdController.text = id;
-        status = 'Room created. Share the ID to connect.';
+        status = 'Share this code with the other device';
       });
     } catch (e) {
-      setState(() => status = 'Failed to create room: $e');
+      setState(() {
+        status = 'Failed to create room: $e';
+        isConnecting = false;
+      });
     }
   }
 
   Future<void> _joinRoom() async {
-    if (roomIdController.text.trim().isEmpty) {
+    final code = roomIdController.text.trim();
+    if (code.length != 6) {
+      setState(() => status = 'Enter the 6-digit code');
       return;
     }
 
     setState(() {
       isConnecting = true;
+      isHost = false;
       status = 'Joining room...';
     });
 
     try {
-      await signaling.joinRoom(roomIdController.text.trim(), _peerConnection!);
-      setState(() => status = 'Joined room. Waiting for peer connection...');
+      await signaling.joinRoom(code, _peerConnection!);
+      setState(() {
+        roomId = code;
+        status = 'Connecting to peer...';
+      });
     } catch (e) {
-      setState(() => status = 'Failed to join room: $e');
+      setState(() {
+        status = 'Failed to join: $e';
+        isConnecting = false;
+      });
     }
   }
 
@@ -146,10 +155,10 @@ class _TransferScreenState extends State<TransferScreen>
         setState(() {
           progress = p;
           status = s;
-          if (path != null) {
-            savedPath = path;
-          }
         });
+      },
+      onFileReceived: (file) {
+        setState(() => receivedFile = file);
       },
     );
 
@@ -158,12 +167,13 @@ class _TransferScreenState extends State<TransferScreen>
     };
 
     _dataChannel!.onDataChannelState = (state) {
-      setState(() {
-        status = 'Channel: ${_formatState(state.name)}';
-        if (state == RTCDataChannelState.RTCDataChannelOpen) {
+      if (state == RTCDataChannelState.RTCDataChannelOpen) {
+        setState(() {
           isConnected = true;
-        }
-      });
+          isConnecting = false;
+          status = 'Connected';
+        });
+      }
     };
   }
 
@@ -177,7 +187,6 @@ class _TransferScreenState extends State<TransferScreen>
     setState(() {
       isTransferring = true;
       progress = 0;
-      savedPath = null;
       status = 'Preparing transfer...';
     });
 
@@ -199,7 +208,7 @@ class _TransferScreenState extends State<TransferScreen>
         throw StateError('Could not access selected file path');
       }
 
-      setState(() => status = 'Transfer complete!');
+      setState(() => status = 'Transfer complete');
     } catch (e) {
       setState(() => status = 'Transfer failed: $e');
     } finally {
@@ -226,8 +235,9 @@ class _TransferScreenState extends State<TransferScreen>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         behavior: SnackBarBehavior.floating,
+        width: 200,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        content: const Text('Room ID copied'),
+        content: const Text('Code copied'),
       ),
     );
   }
@@ -253,101 +263,34 @@ class _TransferScreenState extends State<TransferScreen>
         child: SafeArea(
           child: FadeTransition(
             opacity: _fadeAnimation,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 88, 20, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _HeroHeader(isConnected: isConnected),
-                  const SizedBox(height: 24),
-                  GlassCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Text(
-                          'Room',
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Create a room or join with a shared ID to start P2P transfer.',
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.65),
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 80, 20, 32),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 460),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const _HeroHeader(),
+                      const SizedBox(height: 28),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 400),
+                        switchInCurve: Curves.easeOutCubic,
+                        transitionBuilder: (child, animation) => FadeTransition(
+                          opacity: animation,
+                          child: SizeTransition(
+                            sizeFactor: animation,
+                            child: child,
                           ),
                         ),
-                        const SizedBox(height: 18),
-                        TextField(
-                          controller: roomIdController,
-                          decoration: const InputDecoration(
-                            labelText: 'Room ID',
-                            prefixIcon: Icon(Icons.tag_rounded),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                onPressed: isConnecting ? null : _createRoom,
-                                icon: const Icon(Icons.add_circle_outline),
-                                label: const Text('Create'),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                onPressed: isConnecting ? null : _joinRoom,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppTheme.surfaceLight,
-                                ),
-                                icon: const Icon(Icons.login_rounded),
-                                label: const Text('Join'),
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (roomId != null) ...[
-                          const SizedBox(height: 16),
-                          OutlinedButton.icon(
-                            onPressed: _copyRoomId,
-                            icon: const Icon(Icons.copy_rounded),
-                            label: Text('Copy room ID: $roomId'),
-                          ),
-                        ],
-                      ],
-                    ),
+                        child: isConnected
+                            ? _buildTransferView()
+                            : _buildConnectView(),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 20),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 400),
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: Curves.easeInCubic,
-                    child: isConnected
-                        ? _TransferPanel(
-                            key: const ValueKey('transfer'),
-                            status: status,
-                            progress: progress,
-                            isTransferring: isTransferring,
-                            onTransfer: _startTransfer,
-                          )
-                        : _WaitingPanel(
-                            key: const ValueKey('waiting'),
-                            status: status,
-                            isConnecting: isConnecting,
-                          ),
-                  ),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 450),
-                    child: savedPath == null
-                        ? const SizedBox.shrink()
-                        : _SuccessPanel(
-                            key: ValueKey(savedPath),
-                            savedPath: savedPath!,
-                          ),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -355,61 +298,314 @@ class _TransferScreenState extends State<TransferScreen>
       ),
     );
   }
+
+  Widget _buildConnectView() {
+    return Column(
+      key: const ValueKey('connect'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GlassCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              if (roomId != null && isHost) ...[
+                Text(
+                  'Your room code',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.6),
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                RoomCodeDisplay(code: roomId!),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _copyRoomId,
+                        icon: const Icon(Icons.copy_rounded, size: 18),
+                        label: const Text('Copy'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                _StatusLine(
+                  status: status,
+                  showSpinner: isConnecting || !isConnected,
+                ),
+              ] else ...[
+                Icon(
+                  Icons.wifi_tethering_rounded,
+                  size: 40,
+                  color: AppTheme.secondary.withValues(alpha: 0.9),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Connect two devices',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Create a code on one device and enter it on the other.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
+                ),
+                const SizedBox(height: 22),
+                ElevatedButton.icon(
+                  onPressed: isConnecting ? null : _createRoom,
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('Create a room'),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                ),
+                const SizedBox(height: 22),
+                Row(
+                  children: [
+                    Expanded(child: Divider(color: Colors.white24)),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Text(
+                        'OR JOIN',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.45),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ),
+                    Expanded(child: Divider(color: Colors.white24)),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                TextField(
+                  controller: roomIdController,
+                  keyboardType: TextInputType.number,
+                  textAlign: TextAlign.center,
+                  maxLength: 6,
+                  style: const TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 10,
+                  ),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
+                  ],
+                  decoration: const InputDecoration(
+                    counterText: '',
+                    hintText: '000000',
+                    hintStyle: TextStyle(
+                      letterSpacing: 10,
+                      color: Colors.white24,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                ElevatedButton.icon(
+                  onPressed: isConnecting ? null : _joinRoom,
+                  icon: const Icon(Icons.login_rounded),
+                  label: const Text('Join room'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.surfaceLight,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                ),
+                if (isConnecting) ...[
+                  const SizedBox(height: 16),
+                  _StatusLine(status: status, showSpinner: true),
+                ] else if (status.startsWith('Failed') ||
+                    status.startsWith('Enter')) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    status,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: AppTheme.accent),
+                  ),
+                ],
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTransferView() {
+    return Column(
+      key: const ValueKey('transfer'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GlassCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 68,
+                height: 68,
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.cloud_upload_rounded,
+                  color: AppTheme.primary,
+                  size: 34,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Send a file',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+              const SizedBox(height: 6),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                child: Text(
+                  status,
+                  key: ValueKey(status),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.65)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              AnimatedProgressSection(
+                progress: progress,
+                isActive: isTransferring || (progress > 0 && progress < 1),
+              ),
+              if (isTransferring || (progress > 0 && progress < 1))
+                const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: isTransferring ? null : _startTransfer,
+                  icon: const Icon(Icons.attach_file_rounded),
+                  label: Text(
+                    isTransferring ? 'Sending...' : 'Select & send file',
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 450),
+          transitionBuilder: (child, animation) => FadeTransition(
+            opacity: animation,
+            child: SizeTransition(sizeFactor: animation, child: child),
+          ),
+          child: receivedFile == null
+              ? const SizedBox.shrink()
+              : Padding(
+                  key: ValueKey(receivedFile!.name),
+                  padding: const EdgeInsets.only(top: 20),
+                  child: _DownloadCard(
+                    file: receivedFile!,
+                    onDownload: () => _receiverManager?.redownload(),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StatusLine extends StatelessWidget {
+  const _StatusLine({required this.status, required this.showSpinner});
+
+  final String status;
+  final bool showSpinner;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        if (showSpinner) ...[
+          const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 10),
+        ],
+        Flexible(
+          child: Text(
+            status,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.7),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _HeroHeader extends StatelessWidget {
-  const _HeroHeader({required this.isConnected});
-
-  final bool isConnected;
+  const _HeroHeader();
 
   @override
   Widget build(BuildContext context) {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         TweenAnimationBuilder<double>(
-          tween: Tween<double>(end: isConnected ? 1 : 0.75),
-          duration: const Duration(milliseconds: 500),
+          tween: Tween<double>(begin: 0.85, end: 1),
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeOutBack,
           builder: (context, scale, child) {
-            return Transform.scale(
-              scale: scale,
-              child: Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [AppTheme.primary, AppTheme.secondary],
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppTheme.primary.withValues(alpha: 0.35),
-                      blurRadius: 24,
-                      offset: const Offset(0, 10),
-                    ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.swap_horiz_rounded,
-                  color: Colors.white,
-                  size: 34,
-                ),
-              ),
-            );
+            return Transform.scale(scale: scale, child: child);
           },
+          child: Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [AppTheme.primary, AppTheme.secondary],
+              ),
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.primary.withValues(alpha: 0.4),
+                  blurRadius: 28,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.swap_horiz_rounded,
+              color: Colors.white,
+              size: 38,
+            ),
+          ),
         ),
         const SizedBox(height: 18),
         Text(
-          'Fast P2P file streaming',
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+          'ShareSync',
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                 fontWeight: FontWeight.w800,
               ),
         ),
         const SizedBox(height: 8),
         Text(
-          'Direct device-to-device transfer over WebRTC. No cloud upload.',
+          'Fast, private device-to-device file transfer.',
+          textAlign: TextAlign.center,
           style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.68),
+            color: Colors.white.withValues(alpha: 0.6),
             height: 1.4,
           ),
         ),
@@ -418,56 +614,11 @@ class _HeroHeader extends StatelessWidget {
   }
 }
 
-class _WaitingPanel extends StatelessWidget {
-  const _WaitingPanel({
-    super.key,
-    required this.status,
-    required this.isConnecting,
-  });
+class _DownloadCard extends StatelessWidget {
+  const _DownloadCard({required this.file, required this.onDownload});
 
-  final String status;
-  final bool isConnecting;
-
-  @override
-  Widget build(BuildContext context) {
-    return GlassCard(
-      child: Column(
-        children: [
-          if (isConnecting)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 16),
-              child: CircularProgressIndicator(strokeWidth: 2.5),
-            ),
-          Icon(
-            Icons.hub_outlined,
-            size: 42,
-            color: Colors.white.withValues(alpha: 0.5),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            status,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TransferPanel extends StatelessWidget {
-  const _TransferPanel({
-    super.key,
-    required this.status,
-    required this.progress,
-    required this.isTransferring,
-    required this.onTransfer,
-  });
-
-  final String status;
-  final double progress;
-  final bool isTransferring;
-  final VoidCallback onTransfer;
+  final ReceivedFile file;
+  final VoidCallback onDownload;
 
   @override
   Widget build(BuildContext context) {
@@ -475,83 +626,98 @@ class _TransferPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'Transfer',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-          ),
-          const SizedBox(height: 8),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 300),
-            child: Text(
-              status,
-              key: ValueKey(status),
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.72)),
-            ),
-          ),
-          const SizedBox(height: 20),
-          AnimatedProgressSection(
-            progress: progress,
-            isActive: isTransferring || progress > 0,
-          ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: isTransferring ? null : onTransfer,
-            icon: const Icon(Icons.cloud_upload_rounded),
-            label: Text(
-              isTransferring ? 'Transferring...' : 'Select & Send File',
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SuccessPanel extends StatelessWidget {
-  const _SuccessPanel({super.key, required this.savedPath});
-
-  final String savedPath;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 20),
-      child: GlassCard(
-        child: Column(
-          children: [
-            TweenAnimationBuilder<double>(
-              tween: Tween<double>(begin: 0.8, end: 1),
-              duration: const Duration(milliseconds: 500),
-              curve: Curves.elasticOut,
-              builder: (context, scale, child) {
-                return Transform.scale(
-                  scale: scale,
-                  child: const Icon(
-                    Icons.check_circle_rounded,
-                    color: AppTheme.secondary,
-                    size: 56,
+          Row(
+            children: [
+              TweenAnimationBuilder<double>(
+                tween: Tween<double>(begin: 0.6, end: 1),
+                duration: const Duration(milliseconds: 500),
+                curve: Curves.elasticOut,
+                builder: (context, scale, child) =>
+                    Transform.scale(scale: scale, child: child),
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: AppTheme.secondary.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                );
-              },
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'Transfer complete',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              savedPath,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.white.withValues(alpha: 0.7),
+                  child: const Icon(
+                    Icons.check_rounded,
+                    color: AppTheme.secondary,
+                    size: 26,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      file.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      file.readableSize,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.6),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          if (file.canRedownload)
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: onDownload,
+                icon: const Icon(Icons.download_rounded),
+                label: const Text('Download again'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.secondary,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                ),
+              ),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.folder_rounded,
+                    size: 18,
+                    color: Colors.white.withValues(alpha: 0.6),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Saved to: ${file.savedPath}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.6),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+        ],
       ),
     );
   }

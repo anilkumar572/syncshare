@@ -1,11 +1,14 @@
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 class SignalingService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final Random _random = Random.secure();
 
   Future<String> createRoom(RTCPeerConnection pc) async {
-    final roomRef = _db.collection('rooms').doc();
+    final roomRef = await _reserveRoom();
 
     pc.onIceCandidate = (candidate) {
       roomRef.collection('callerCandidates').add(candidate.toMap());
@@ -13,13 +16,28 @@ class SignalingService {
 
     final offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await roomRef.set({'offer': offer.toMap()});
+    await roomRef.set({
+      'offer': offer.toMap(),
+      'createdAt': FieldValue.serverTimestamp(),
+    });
 
     _listenForAnswer(roomRef, pc);
     _listenForCalleeCandidates(roomRef, pc);
     await _addExistingCandidates(roomRef.collection('calleeCandidates'), pc);
 
     return roomRef.id;
+  }
+
+  Future<DocumentReference<Map<String, dynamic>>> _reserveRoom() async {
+    for (var attempt = 0; attempt < 6; attempt++) {
+      final code = (100000 + _random.nextInt(900000)).toString();
+      final ref = _db.collection('rooms').doc(code);
+      final snapshot = await ref.get();
+      if (!snapshot.exists) {
+        return ref;
+      }
+    }
+    throw StateError('Could not allocate a room code. Please try again.');
   }
 
   Future<void> joinRoom(String roomId, RTCPeerConnection pc) async {

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:sharesyncapp/logic/received_file.dart';
 import 'package:sharesyncapp/utils/web_download.dart';
 
 class FileReceiverManager {
@@ -9,13 +10,15 @@ class FileReceiverManager {
   int _receivedSize = 0;
   int _totalSize = 0;
   String? _fileName;
+  Uint8List? _lastBytes;
   double _lastReportedProgress = -1;
   DateTime _lastProgressUpdate = DateTime.fromMillisecondsSinceEpoch(0);
 
   final void Function(double progress, String status, String? filePath)
       onStatusUpdate;
+  final void Function(ReceivedFile file)? onFileReceived;
 
-  FileReceiverManager({required this.onStatusUpdate});
+  FileReceiverManager({required this.onStatusUpdate, this.onFileReceived});
 
   void handleIncomingMessage(RTCDataChannelMessage message) {
     if (message.isBinary) {
@@ -32,10 +35,12 @@ class FileReceiverManager {
       _totalSize = data['size'] as int;
       _receivedSize = 0;
       _lastReportedProgress = -1;
+      _lastBytes = null;
       _webBuffer.clear();
-      onStatusUpdate(0.0, 'Starting download: $_fileName', null);
+      onStatusUpdate(0.0, 'Receiving $_fileName...', null);
     } else if (data['type'] == 'eof') {
       final bytes = _webBuffer.toBytes();
+      _lastBytes = bytes;
 
       if (_totalSize > 0 && _receivedSize != _totalSize) {
         onStatusUpdate(
@@ -46,8 +51,19 @@ class FileReceiverManager {
         return;
       }
 
+      final name = _fileName ?? 'download';
+      triggerBrowserDownload(bytes, name);
+      onStatusUpdate(1.0, 'File ready', _fileName);
+      onFileReceived?.call(
+        ReceivedFile(name: name, size: bytes.length, canRedownload: true),
+      );
+    }
+  }
+
+  void redownload() {
+    final bytes = _lastBytes;
+    if (bytes != null) {
       triggerBrowserDownload(bytes, _fileName ?? 'download');
-      onStatusUpdate(1.0, 'File downloaded!', _fileName);
     }
   }
 
