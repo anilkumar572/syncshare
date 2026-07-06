@@ -2,7 +2,8 @@
   "name": "sharesyncapp",
   "private": true,
   "scripts": {
-    "deploy": "bash scripts/deploy.sh",
+    "deploy": "bash scripts/deploy.sh hosting",
+    "deploy:all": "bash scripts/deploy.sh hosting,firestore:rules",
     "deploy:rules": "bash scripts/deploy.sh firestore:rules",
     "deploy:hosting": "bash scripts/deploy.sh hosting",
     "firebase:login": "firebase login",

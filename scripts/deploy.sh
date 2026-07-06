@@ -13,7 +13,7 @@ if [[ ! -x "$FIREBASE_BIN" ]]; then
   npm install
 fi
 
-if [[ ! -f "build/web/index.html" ]]; then
+if [[ ! -f "build/web/index.html" && "$DEPLOY_TARGETS" == *"hosting"* ]]; then
   echo "Web build not found. Run:"
   echo "  flutter build web --release --no-wasm-dry-run"
   exit 1
