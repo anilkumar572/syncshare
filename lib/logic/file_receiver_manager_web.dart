@@ -17,8 +17,13 @@ class FileReceiverManager {
   final void Function(double progress, String status, String? filePath)
       onStatusUpdate;
   final void Function(ReceivedFile file)? onFileReceived;
+  final void Function(String name, int size)? onMeta;
 
-  FileReceiverManager({required this.onStatusUpdate, this.onFileReceived});
+  FileReceiverManager({
+    required this.onStatusUpdate,
+    this.onFileReceived,
+    this.onMeta,
+  });
 
   void handleIncomingMessage(RTCDataChannelMessage message) {
     if (message.isBinary) {
@@ -37,6 +42,7 @@ class FileReceiverManager {
       _lastReportedProgress = -1;
       _lastBytes = null;
       _webBuffer.clear();
+      onMeta?.call(_fileName!, _totalSize);
       onStatusUpdate(0.0, 'Receiving $_fileName...', null);
     } else if (data['type'] == 'eof') {
       final bytes = _webBuffer.toBytes();

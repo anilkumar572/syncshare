@@ -9,10 +9,10 @@ import 'package:sharesyncapp/logic/file_transfer_platform.dart';
 import 'package:sharesyncapp/logic/received_file.dart';
 import 'package:sharesyncapp/servises/singnaling_service.dart';
 import 'package:sharesyncapp/theme/app_theme.dart';
-import 'package:sharesyncapp/widgets/animated_progress_section.dart';
 import 'package:sharesyncapp/widgets/animated_status_chip.dart';
 import 'package:sharesyncapp/widgets/glass_card.dart';
 import 'package:sharesyncapp/widgets/room_code_display.dart';
+import 'package:sharesyncapp/widgets/transfer_status_card.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 class TransferScreen extends StatefulWidget {
@@ -42,6 +42,13 @@ class _TransferScreenState extends State<TransferScreen>
   String status = 'Ready to connect';
   bool isConnected = false;
   ReceivedFile? receivedFile;
+
+  TransferPhase phase = TransferPhase.idle;
+  String? activeFileName;
+  int totalBytes = 0;
+  double speed = 0;
+  DateTime _lastSampleTime = DateTime.now();
+  int _lastSampleBytes = 0;
 
   @override
   void initState() {
@@ -151,14 +158,29 @@ class _TransferScreenState extends State<TransferScreen>
 
   void _setupDataChannelListeners() {
     _receiverManager = FileReceiverManager(
+      onMeta: (name, size) {
+        setState(() {
+          phase = TransferPhase.receiving;
+          activeFileName = name;
+          totalBytes = size;
+          progress = 0;
+          receivedFile = null;
+          _resetSpeedSampling();
+        });
+      },
       onStatusUpdate: (double p, String s, String? path) {
         setState(() {
-          progress = p;
+          _recordProgress(p);
           status = s;
         });
       },
       onFileReceived: (file) {
-        setState(() => receivedFile = file);
+        setState(() {
+          phase = TransferPhase.done;
+          progress = 1;
+          speed = 0;
+          receivedFile = file;
+        });
       },
     );
 
@@ -184,17 +206,23 @@ class _TransferScreenState extends State<TransferScreen>
       return;
     }
 
+    final picked = result.files.single;
+
     setState(() {
       isTransferring = true;
+      phase = TransferPhase.sending;
+      activeFileName = picked.name;
+      totalBytes = picked.size;
       progress = 0;
+      receivedFile = null;
       status = 'Preparing transfer...';
+      _resetSpeedSampling();
     });
 
     await WakelockPlus.enable();
 
     try {
       final manager = FileTransferManager(_dataChannel!);
-      final picked = result.files.single;
 
       if (kIsWeb) {
         final bytes = picked.bytes;
@@ -208,9 +236,17 @@ class _TransferScreenState extends State<TransferScreen>
         throw StateError('Could not access selected file path');
       }
 
-      setState(() => status = 'Transfer complete');
+      setState(() {
+        phase = TransferPhase.done;
+        progress = 1;
+        speed = 0;
+        status = 'File sent successfully';
+      });
     } catch (e) {
-      setState(() => status = 'Transfer failed: $e');
+      setState(() {
+        phase = TransferPhase.idle;
+        status = 'Transfer failed: $e';
+      });
     } finally {
       await WakelockPlus.disable();
       setState(() => isTransferring = false);
@@ -221,7 +257,30 @@ class _TransferScreenState extends State<TransferScreen>
     if (!mounted) {
       return;
     }
-    setState(() => progress = value);
+    setState(() => _recordProgress(value));
+  }
+
+  void _resetSpeedSampling() {
+    _lastSampleTime = DateTime.now();
+    _lastSampleBytes = 0;
+    speed = 0;
+  }
+
+  void _recordProgress(double value) {
+    progress = value;
+    if (totalBytes <= 0) {
+      return;
+    }
+    final now = DateTime.now();
+    final currentBytes = (totalBytes * value.clamp(0, 1)).round();
+    final elapsedMs = now.difference(_lastSampleTime).inMilliseconds;
+    if (elapsedMs >= 300) {
+      final deltaBytes = currentBytes - _lastSampleBytes;
+      final instantSpeed = deltaBytes / (elapsedMs / 1000);
+      speed = speed <= 0 ? instantSpeed : speed * 0.6 + instantSpeed * 0.4;
+      _lastSampleTime = now;
+      _lastSampleBytes = currentBytes;
+    }
   }
 
   Future<void> _copyRoomId() async {
@@ -438,58 +497,84 @@ class _TransferScreenState extends State<TransferScreen>
   }
 
   Widget _buildTransferView() {
+    final showStatusCard = phase != TransferPhase.idle;
+    final isBusy = phase == TransferPhase.sending ||
+        phase == TransferPhase.receiving;
+
     return Column(
       key: const ValueKey('transfer'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 400),
+          transitionBuilder: (child, animation) => FadeTransition(
+            opacity: animation,
+            child: SizeTransition(sizeFactor: animation, child: child),
+          ),
+          child: showStatusCard
+              ? Padding(
+                  key: const ValueKey('status-card'),
+                  padding: const EdgeInsets.only(bottom: 20),
+                  child: TransferStatusCard(
+                    phase: phase,
+                    progress: progress,
+                    fileName: activeFileName,
+                    totalBytes: totalBytes,
+                    speed: speed,
+                  ),
+                )
+              : const SizedBox.shrink(),
+        ),
         GlassCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Container(
-                width: 68,
-                height: 68,
+                width: 64,
+                height: 64,
                 decoration: BoxDecoration(
                   color: AppTheme.primary.withValues(alpha: 0.15),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.cloud_upload_rounded,
+                child: Icon(
+                  isBusy ? Icons.sync_rounded : Icons.cloud_upload_rounded,
                   color: AppTheme.primary,
-                  size: 34,
+                  size: 32,
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               Text(
-                'Send a file',
+                phase == TransferPhase.receiving
+                    ? 'Receiving from peer'
+                    : 'Send a file',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
               ),
               const SizedBox(height: 6),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 300),
-                child: Text(
-                  status,
-                  key: ValueKey(status),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.65)),
-                ),
+              Text(
+                phase == TransferPhase.receiving
+                    ? 'The file will download automatically when ready.'
+                    : 'Pick a file to send it instantly to the connected device.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.6)),
               ),
               const SizedBox(height: 20),
-              AnimatedProgressSection(
-                progress: progress,
-                isActive: isTransferring || (progress > 0 && progress < 1),
-              ),
-              if (isTransferring || (progress > 0 && progress < 1))
-                const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: isTransferring ? null : _startTransfer,
-                  icon: const Icon(Icons.attach_file_rounded),
+                  onPressed: isBusy ? null : _startTransfer,
+                  icon: Icon(
+                    isBusy
+                        ? Icons.hourglass_top_rounded
+                        : Icons.attach_file_rounded,
+                  ),
                   label: Text(
-                    isTransferring ? 'Sending...' : 'Select & send file',
+                    phase == TransferPhase.sending
+                        ? 'Sending...'
+                        : phase == TransferPhase.receiving
+                            ? 'Receiving...'
+                            : 'Select & send file',
                   ),
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
