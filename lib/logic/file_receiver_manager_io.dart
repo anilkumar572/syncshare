@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:sharesyncapp/logic/received_file.dart';
 
 class FileReceiverManager {
   IOSink? _fileSink;
@@ -15,8 +16,9 @@ class FileReceiverManager {
 
   final void Function(double progress, String status, String? filePath)
       onStatusUpdate;
+  final void Function(ReceivedFile file)? onFileReceived;
 
-  FileReceiverManager({required this.onStatusUpdate});
+  FileReceiverManager({required this.onStatusUpdate, this.onFileReceived});
 
   void handleIncomingMessage(RTCDataChannelMessage message) async {
     if (message.isBinary) {
@@ -49,7 +51,7 @@ class FileReceiverManager {
       _receivedFile = File('${directory!.path}/$_fileName');
       _fileSink = _receivedFile!.openWrite();
 
-      onStatusUpdate(0.0, 'Starting download: $_fileName', null);
+      onStatusUpdate(0.0, 'Receiving $_fileName...', null);
     } else if (data['type'] == 'eof') {
       await _fileSink?.flush();
       await _fileSink?.close();
@@ -64,9 +66,18 @@ class FileReceiverManager {
         return;
       }
 
-      onStatusUpdate(1.0, 'File Saved!', _receivedFile!.path);
+      onStatusUpdate(1.0, 'File saved', _receivedFile!.path);
+      onFileReceived?.call(
+        ReceivedFile(
+          name: _fileName ?? 'download',
+          size: _receivedSize,
+          savedPath: _receivedFile!.path,
+        ),
+      );
     }
   }
+
+  void redownload() {}
 
   void _maybeReportProgress(String status) {
     final progress = _totalSize > 0 ? (_receivedSize / _totalSize) : 0.0;
