@@ -22,7 +22,9 @@ fi
 setup_service_account() {
   local sa_json=""
 
-  if [[ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]]; then
+  if [[ -n "${FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711:-}" ]]; then
+    sa_json="$FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711"
+  elif [[ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]]; then
     sa_json="$FIREBASE_SERVICE_ACCOUNT"
   elif [[ -n "${FIREBASE_SERVICE_ACCOUNT_JSON:-}" ]]; then
     sa_json="$FIREBASE_SERVICE_ACCOUNT_JSON"
@@ -78,6 +80,7 @@ Firebase authentication failed.
 Use your service account JSON (recommended for GitHub Actions):
 
   GitHub secret name (any one of these):
+    - FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711
     - FIREBASE_SERVICE_ACCOUNT
     - FIREBASE_SERVICE_ACCOUNT_JSON
     - GOOGLE_APPLICATION_CREDENTIALS_JSON
