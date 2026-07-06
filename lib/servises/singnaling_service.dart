@@ -7,10 +7,19 @@ class SignalingService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final Random _random = Random.secure();
 
+  // Buffer remote ICE candidates that arrive before the remote description is
+  // set, then flush them. Adding a candidate before setRemoteDescription is a
+  // common cause of connections silently never establishing.
+  bool _remoteDescriptionSet = false;
+  final List<RTCIceCandidate> _pendingCandidates = [];
+
   Future<String> createRoom(RTCPeerConnection pc) async {
     final roomRef = await _reserveRoom();
 
     pc.onIceCandidate = (candidate) {
+      if (candidate.candidate == null) {
+        return;
+      }
       roomRef.collection('callerCandidates').add(candidate.toMap());
     };
 
@@ -22,10 +31,39 @@ class SignalingService {
     });
 
     _listenForAnswer(roomRef, pc);
-    _listenForCalleeCandidates(roomRef, pc);
-    await _addExistingCandidates(roomRef.collection('calleeCandidates'), pc);
+    _listenForCandidates(roomRef.collection('calleeCandidates'), pc);
 
     return roomRef.id;
+  }
+
+  Future<void> joinRoom(String roomId, RTCPeerConnection pc) async {
+    final roomRef = _db.collection('rooms').doc(roomId);
+    final doc = await roomRef.get();
+
+    if (!doc.exists) {
+      throw StateError('Room $roomId not found. Check the code.');
+    }
+
+    pc.onIceCandidate = (candidate) {
+      if (candidate.candidate == null) {
+        return;
+      }
+      roomRef.collection('calleeCandidates').add(candidate.toMap());
+    };
+
+    final data = doc.data()!;
+    final offer = data['offer'] as Map<String, dynamic>;
+    await pc.setRemoteDescription(
+      RTCSessionDescription(offer['sdp'] as String, offer['type'] as String),
+    );
+    _remoteDescriptionSet = true;
+    await _flushPendingCandidates(pc);
+
+    final answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await roomRef.update({'answer': answer.toMap()});
+
+    _listenForCandidates(roomRef.collection('callerCandidates'), pc);
   }
 
   Future<DocumentReference<Map<String, dynamic>>> _reserveRoom() async {
@@ -40,94 +78,58 @@ class SignalingService {
     throw StateError('Could not allocate a room code. Please try again.');
   }
 
-  Future<void> joinRoom(String roomId, RTCPeerConnection pc) async {
-    final roomRef = _db.collection('rooms').doc(roomId);
-    final doc = await roomRef.get();
-
-    if (!doc.exists) {
-      throw StateError('Room $roomId does not exist');
-    }
-
-    pc.onIceCandidate = (candidate) {
-      roomRef.collection('calleeCandidates').add(candidate.toMap());
-    };
-
-    final data = doc.data()!;
-    await pc.setRemoteDescription(
-      RTCSessionDescription(data['offer']['sdp'], data['offer']['type']),
-    );
-
-    final answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    await roomRef.update({'answer': answer.toMap()});
-
-    await _addExistingCandidates(
-      roomRef.collection('callerCandidates'),
-      pc,
-    );
-    _listenForCallerCandidates(roomRef, pc);
-  }
-
-  void _listenForAnswer(DocumentReference roomRef, RTCPeerConnection pc) {
-    var answerApplied = false;
-
+  void _listenForAnswer(
+    DocumentReference<Map<String, dynamic>> roomRef,
+    RTCPeerConnection pc,
+  ) {
     roomRef.snapshots().listen((snapshot) async {
-      final data = snapshot.data() as Map<String, dynamic>?;
-      final answer = data?['answer'] as Map<String, dynamic>?;
-      if (answer == null || answerApplied) {
+      final answer = snapshot.data()?['answer'] as Map<String, dynamic>?;
+      if (answer == null || _remoteDescriptionSet) {
         return;
       }
 
-      answerApplied = true;
       await pc.setRemoteDescription(
-        RTCSessionDescription(answer['sdp'], answer['type']),
+        RTCSessionDescription(
+          answer['sdp'] as String,
+          answer['type'] as String,
+        ),
       );
+      _remoteDescriptionSet = true;
+      await _flushPendingCandidates(pc);
     });
   }
 
-  void _listenForCallerCandidates(
-    DocumentReference roomRef,
+  void _listenForCandidates(
+    CollectionReference<Map<String, dynamic>> candidates,
     RTCPeerConnection pc,
   ) {
-    roomRef.collection('callerCandidates').snapshots().listen((snapshot) {
+    candidates.snapshots().listen((snapshot) {
       for (final change in snapshot.docChanges) {
         if (change.type == DocumentChangeType.added) {
-          _addCandidate(pc, change.doc.data()!);
+          _handleCandidate(pc, change.doc.data()!);
         }
       }
     });
   }
 
-  void _listenForCalleeCandidates(
-    DocumentReference roomRef,
-    RTCPeerConnection pc,
-  ) {
-    roomRef.collection('calleeCandidates').snapshots().listen((snapshot) {
-      for (final change in snapshot.docChanges) {
-        if (change.type == DocumentChangeType.added) {
-          _addCandidate(pc, change.doc.data()!);
-        }
-      }
-    });
-  }
+  void _handleCandidate(RTCPeerConnection pc, Map<String, dynamic> data) {
+    final candidate = RTCIceCandidate(
+      data['candidate'] as String?,
+      data['sdpMid'] as String?,
+      (data['sdpMLineIndex'] as num?)?.toInt(),
+    );
 
-  Future<void> _addExistingCandidates(
-    CollectionReference candidates,
-    RTCPeerConnection pc,
-  ) async {
-    final snapshot = await candidates.get();
-    for (final doc in snapshot.docs) {
-      _addCandidate(pc, doc.data() as Map<String, dynamic>);
+    if (_remoteDescriptionSet) {
+      pc.addCandidate(candidate);
+    } else {
+      _pendingCandidates.add(candidate);
     }
   }
 
-  void _addCandidate(RTCPeerConnection pc, Map<String, dynamic> data) {
-    pc.addCandidate(
-      RTCIceCandidate(
-        data['candidate'] as String,
-        data['sdpMid'] as String?,
-        data['sdpMLineIndex'] as int?,
-      ),
-    );
+  Future<void> _flushPendingCandidates(RTCPeerConnection pc) async {
+    for (final candidate in _pendingCandidates) {
+      await pc.addCandidate(candidate);
+    }
+    _pendingCandidates.clear();
   }
 }

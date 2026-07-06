@@ -76,8 +76,29 @@ class _TransferScreenState extends State<TransferScreen>
   Future<void> _initWebRTC() async {
     final configuration = {
       'iceServers': [
-        {'urls': 'stun:stun.l.google.com:19302'},
+        {
+          'urls': [
+            'stun:stun.l.google.com:19302',
+            'stun:stun1.l.google.com:19302',
+          ],
+        },
+        {
+          'urls': 'turn:openrelay.metered.ca:80',
+          'username': 'openrelayproject',
+          'credential': 'openrelayproject',
+        },
+        {
+          'urls': 'turn:openrelay.metered.ca:443',
+          'username': 'openrelayproject',
+          'credential': 'openrelayproject',
+        },
+        {
+          'urls': 'turn:openrelay.metered.ca:443?transport=tcp',
+          'username': 'openrelayproject',
+          'credential': 'openrelayproject',
+        },
       ],
+      'sdpSemantics': 'unified-plan',
     };
 
     _peerConnection = await createPeerConnection(configuration);
@@ -87,14 +108,40 @@ class _TransferScreenState extends State<TransferScreen>
       _setupDataChannelListeners();
     };
 
+    _peerConnection!.onIceConnectionState = (state) {
+      if (state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
+        _peerConnection?.restartIce();
+      }
+    };
+
     _peerConnection!.onConnectionState = (state) {
+      if (!mounted) {
+        return;
+      }
       setState(() {
-        isConnecting =
-            state == RTCPeerConnectionState.RTCPeerConnectionStateConnecting;
-        isConnected =
-            state == RTCPeerConnectionState.RTCPeerConnectionStateConnected;
-        if (isConnected) {
-          status = 'Connected';
+        switch (state) {
+          case RTCPeerConnectionState.RTCPeerConnectionStateConnecting:
+            isConnecting = true;
+            status = 'Connecting to peer...';
+            break;
+          case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
+            isConnecting = false;
+            isConnected = true;
+            status = 'Connected';
+            break;
+          case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
+            status = 'Peer disconnected. Reconnecting...';
+            break;
+          case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
+            isConnecting = false;
+            isConnected = false;
+            status = 'Connection failed. Check network and try again.';
+            break;
+          case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
+            isConnected = false;
+            break;
+          default:
+            break;
         }
       });
     };
