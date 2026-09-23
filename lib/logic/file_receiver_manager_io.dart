@@ -50,7 +50,6 @@ class FileReceiverManager {
       return;
     }
 
-    // Meta was sent but the file sink is not ready yet — keep early chunks.
     if (_fileName != null && _totalSize > 0) {
       _earlyBinaryBuffer.add(data);
     }
@@ -68,6 +67,8 @@ class FileReceiverManager {
         _writeBinary(chunk);
       }
       _earlyBinaryBuffer.clear();
+    }).catchError((Object error) {
+      onStatusUpdate(0, 'Could not save file: $error', null);
     });
 
     onMeta?.call(_fileName!, _totalSize);
@@ -79,18 +80,32 @@ class FileReceiverManager {
     await _fileSink?.close();
     _fileSink = null;
 
-    Directory? directory;
+    final directory = await _resolveSaveDirectory();
+    final safeName = _fileName!.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    _receivedFile = File('${directory.path}/$safeName');
+    if (await _receivedFile!.exists()) {
+      await _receivedFile!.delete();
+    }
+    _fileSink = _receivedFile!.openWrite();
+  }
+
+  Future<Directory> _resolveSaveDirectory() async {
     if (Platform.isAndroid) {
-      directory = Directory('/storage/emulated/0/Download');
-      if (!await directory.exists()) {
-        directory = await getExternalStorageDirectory();
+      final downloads = await getDownloadsDirectory();
+      if (downloads != null) {
+        if (!await downloads.exists()) {
+          await downloads.create(recursive: true);
+        }
+        return downloads;
       }
-    } else {
-      directory = await getApplicationDocumentsDirectory();
+
+      final external = await getExternalStorageDirectory();
+      if (external != null) {
+        return external;
+      }
     }
 
-    _receivedFile = File('${directory!.path}/$_fileName');
-    _fileSink = _receivedFile!.openWrite();
+    return getApplicationDocumentsDirectory();
   }
 
   void _writeBinary(Uint8List data) {
@@ -120,6 +135,11 @@ class FileReceiverManager {
         'Warning: size mismatch ($_receivedSize / $_totalSize bytes)',
         _receivedFile?.path,
       );
+      return;
+    }
+
+    if (_receivedFile == null) {
+      onStatusUpdate(1.0, 'Receive failed: file was not saved', null);
       return;
     }
 

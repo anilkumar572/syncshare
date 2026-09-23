@@ -8,6 +8,7 @@ import 'package:sharesyncapp/logic/file_transfer_manager.dart';
 import 'package:sharesyncapp/logic/file_transfer_platform.dart';
 import 'package:sharesyncapp/logic/received_file.dart';
 import 'package:sharesyncapp/servises/singnaling_service.dart';
+import 'package:sharesyncapp/utils/browser_file_stream.dart';
 import 'package:sharesyncapp/theme/app_theme.dart';
 import 'package:sharesyncapp/widgets/animated_status_chip.dart';
 import 'package:sharesyncapp/widgets/glass_card.dart';
@@ -247,19 +248,85 @@ class _TransferScreenState extends State<TransferScreen>
   }
 
   Future<void> _startTransfer() async {
-    final result = await FilePicker.platform.pickFiles(withReadStream: true);
+    if (_dataChannel == null) {
+      return;
+    }
 
-    if (result == null || _dataChannel == null) {
+    if (kIsWeb) {
+      await _startWebTransfer();
+      return;
+    }
+
+    await _startNativeTransfer();
+  }
+
+  Future<void> _startWebTransfer() async {
+    final picked = await pickBrowserFileForStream();
+    if (picked == null || !mounted) {
+      return;
+    }
+
+    await _runSend(
+      fileName: picked.name,
+      totalSize: picked.size,
+      send: (manager) => manager.sendFromStream(
+        picked.stream,
+        picked.size,
+        picked.name,
+        _updateProgress,
+      ),
+    );
+  }
+
+  Future<void> _startNativeTransfer() async {
+    final result = await FilePicker.platform.pickFiles(
+      withReadStream: true,
+      withData: false,
+      allowCompression: false,
+    );
+
+    if (result == null) {
       return;
     }
 
     final picked = result.files.single;
 
+    await _runSend(
+      fileName: picked.name,
+      totalSize: picked.size,
+      send: (manager) async {
+        if (picked.readStream != null) {
+          await manager.sendFromStream(
+            picked.readStream!,
+            picked.size,
+            picked.name,
+            _updateProgress,
+          );
+        } else if (picked.path != null) {
+          await sendFileFromDisk(_dataChannel!, picked.path!, _updateProgress);
+        } else if (picked.bytes != null) {
+          await manager.sendFromBytes(
+            picked.bytes!,
+            picked.name,
+            _updateProgress,
+          );
+        } else {
+          throw StateError('Could not read selected file');
+        }
+      },
+    );
+  }
+
+  Future<void> _runSend({
+    required String fileName,
+    required int totalSize,
+    required Future<void> Function(FileTransferManager manager) send,
+  }) async {
     setState(() {
       isTransferring = true;
       phase = TransferPhase.sending;
-      activeFileName = picked.name;
-      totalBytes = picked.size;
+      activeFileName = fileName;
+      this.totalBytes = totalSize;
       progress = 0;
       receivedFile = null;
       status = 'Preparing transfer...';
@@ -270,21 +337,7 @@ class _TransferScreenState extends State<TransferScreen>
 
     try {
       final manager = FileTransferManager(_dataChannel!);
-
-      if (!kIsWeb && picked.path != null) {
-        await sendFileFromDisk(_dataChannel!, picked.path!, _updateProgress);
-      } else if (picked.readStream != null) {
-        await manager.sendFromStream(
-          picked.readStream!,
-          picked.size,
-          picked.name,
-          _updateProgress,
-        );
-      } else if (picked.bytes != null) {
-        await manager.sendFromBytes(picked.bytes!, picked.name, _updateProgress);
-      } else {
-        throw StateError('Could not read selected file');
-      }
+      await send(manager);
 
       setState(() {
         phase = TransferPhase.done;
@@ -299,7 +352,9 @@ class _TransferScreenState extends State<TransferScreen>
       });
     } finally {
       await WakelockPlus.disable();
-      setState(() => isTransferring = false);
+      if (mounted) {
+        setState(() => isTransferring = false);
+      }
     }
   }
 
