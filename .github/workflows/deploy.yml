@@ -1,4 +1,4 @@
-name: Deploy Web and Firestore Rules
+name: Deploy Web
 
 on:
   push:
@@ -32,26 +32,3 @@ jobs:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711 }}
           channelId: live
           projectId: sharesync-56711
-
-      - name: Authenticate for Firestore rules
-        env:
-          FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711 }}
-        run: |
-          echo "$FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711" > "$RUNNER_TEMP/firebase-service-account.json"
-          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
-
-      - name: Deploy Firestore rules
-        id: firestore_rules
-        continue-on-error: true
-        env:
-          FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SHARESYNC_56711 }}
-        run: npm run deploy:rules
-
-      - name: Firestore rules permission notice
-        if: steps.firestore_rules.outcome == 'failure'
-        run: |
-          echo "::warning::Firestore rules deploy failed (403 permission denied)."
-          echo "Add Firebase Rules Admin role to your service account:"
-          echo "https://console.cloud.google.com/iam-admin/iam?project=sharesync-56711"
-          echo "Or publish firestore.rules manually:"
-          echo "https://console.firebase.google.com/project/sharesync-56711/firestore/rules"
