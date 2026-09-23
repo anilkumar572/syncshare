@@ -1,4 +1,5 @@
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -270,15 +271,15 @@ class _TransferScreenState extends State<TransferScreen>
     try {
       final manager = FileTransferManager(_dataChannel!);
 
-      if (picked.readStream != null) {
+      if (!kIsWeb && picked.path != null) {
+        await sendFileFromDisk(_dataChannel!, picked.path!, _updateProgress);
+      } else if (picked.readStream != null) {
         await manager.sendFromStream(
           picked.readStream!,
           picked.size,
           picked.name,
           _updateProgress,
         );
-      } else if (picked.path != null) {
-        await sendFileFromDisk(_dataChannel!, picked.path!, _updateProgress);
       } else if (picked.bytes != null) {
         await manager.sendFromBytes(picked.bytes!, picked.name, _updateProgress);
       } else {

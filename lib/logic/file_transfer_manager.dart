@@ -7,9 +7,11 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 class FileTransferManager {
   final RTCDataChannel dataChannel;
 
-  static const int chunkSize = 64 * 1024;
-  static const int maxBuffered = 4 * 1024 * 1024;
-  static const int bufferLowThreshold = 2 * 1024 * 1024;
+  /// 16 KiB chunks stay within common WebRTC SCTP message limits across browsers.
+  static const int chunkSize = 16 * 1024;
+  static const int maxBuffered = 512 * 1024;
+  static const int bufferLowThreshold = 256 * 1024;
+  static const Duration bufferWaitTimeout = Duration(seconds: 60);
 
   FileTransferManager(this.dataChannel);
 
@@ -40,16 +42,18 @@ class FileTransferManager {
       ),
     );
 
+    // Give the peer a moment to handle meta before binary frames arrive.
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
     var sent = 0;
     var lastReportedProgress = -1.0;
     var lastProgressUpdate = DateTime.fromMillisecondsSinceEpoch(0);
 
-    await for (final chunk in stream) {
+    await for (final chunk in normalizeChunkStream(stream, chunkSize)) {
       await _waitForSendCapacity();
 
-      final bytes = chunk is Uint8List ? chunk : Uint8List.fromList(chunk);
-      dataChannel.send(RTCDataChannelMessage.fromBinary(bytes));
-      sent += bytes.length;
+      dataChannel.send(RTCDataChannelMessage.fromBinary(chunk));
+      sent += chunk.length;
 
       final progress = totalSize > 0 ? sent / totalSize : 1.0;
       final now = DateTime.now();
@@ -66,7 +70,7 @@ class FileTransferManager {
     dataChannel.send(RTCDataChannelMessage(jsonEncode({"type": "eof"})));
   }
 
-  Stream<List<int>> _chunkBytes(Uint8List bytes) async* {
+  Stream<Uint8List> _chunkBytes(Uint8List bytes) async* {
     for (var offset = 0; offset < bytes.length; offset += chunkSize) {
       final end = (offset + chunkSize > bytes.length)
           ? bytes.length
@@ -99,7 +103,30 @@ class FileTransferManager {
         release();
       }
 
-      await completer.future;
+      await completer.future.timeout(bufferWaitTimeout, onTimeout: release);
     }
+  }
+}
+
+/// Re-chunks arbitrary stream piece sizes into fixed frames for the data channel.
+Stream<Uint8List> normalizeChunkStream(
+  Stream<List<int>> input,
+  int frameSize,
+) async* {
+  var carry = BytesBuilder(copy: false);
+
+  await for (final piece in input) {
+    carry.add(piece);
+    while (carry.length >= frameSize) {
+      final all = carry.takeBytes();
+      yield Uint8List.fromList(all.sublist(0, frameSize));
+      if (all.length > frameSize) {
+        carry.add(all.sublist(frameSize));
+      }
+    }
+  }
+
+  if (carry.length > 0) {
+    yield Uint8List.fromList(carry.takeBytes());
   }
 }
