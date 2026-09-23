@@ -78,21 +78,25 @@ class FileTransferManager {
   Future<void> _waitForSendCapacity() async {
     while ((dataChannel.bufferedAmount ?? 0) > maxBuffered) {
       final completer = Completer<void>();
+      Timer? pollTimer;
 
-      void onLow(int currentAmount) {
+      void release() {
+        pollTimer?.cancel();
         dataChannel.onBufferedAmountLow = null;
         if (!completer.isCompleted) {
           completer.complete();
         }
       }
 
-      dataChannel.onBufferedAmountLow = onLow;
+      dataChannel.onBufferedAmountLow = (_) => release();
+      pollTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+        if ((dataChannel.bufferedAmount ?? 0) <= maxBuffered) {
+          release();
+        }
+      });
 
       if ((dataChannel.bufferedAmount ?? 0) <= maxBuffered) {
-        dataChannel.onBufferedAmountLow = null;
-        if (!completer.isCompleted) {
-          completer.complete();
-        }
+        release();
       }
 
       await completer.future;

@@ -15,7 +15,7 @@ Future<void> sendFileFromDisk(
   final name = file.path.split('/').last;
 
   await manager.sendFromStream(
-    file.openRead(0, FileTransferManager.chunkSize),
+    file.openRead(),
     totalSize,
     name,
     onProgress,
