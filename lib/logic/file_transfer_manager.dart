@@ -2,13 +2,20 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:sharesyncapp/logic/transfer_pacing.dart';
+import 'package:sharesyncapp/utils/browser_file_stream.dart';
 
 class FileTransferManager {
   final RTCDataChannel dataChannel;
 
-  /// 16 KiB chunks stay within common WebRTC SCTP message limits across browsers.
+  /// 16 KiB on desktop web; mobile browsers use smaller frames (see [frameSize]).
   static const int chunkSize = 16 * 1024;
+  static const int mobileWebChunkSize = 8 * 1024;
+
+  int get frameSize =>
+      kIsWeb && isMobileWebBrowser ? mobileWebChunkSize : chunkSize;
   static const int maxBuffered = 512 * 1024;
   static const int bufferLowThreshold = 256 * 1024;
   static const Duration bufferWaitTimeout = Duration(seconds: 60);
@@ -43,13 +50,15 @@ class FileTransferManager {
     );
 
     // Give the peer a moment to handle meta before binary frames arrive.
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await Future<void>.delayed(
+      Duration(milliseconds: useTransferPacing ? 150 : 50),
+    );
 
     var sent = 0;
     var lastReportedProgress = -1.0;
     var lastProgressUpdate = DateTime.fromMillisecondsSinceEpoch(0);
 
-    await for (final chunk in normalizeChunkStream(stream, chunkSize)) {
+    await for (final chunk in normalizeChunkStream(stream, frameSize)) {
       await _waitForSendCapacity();
 
       dataChannel.send(RTCDataChannelMessage.fromBinary(chunk));
@@ -71,15 +80,20 @@ class FileTransferManager {
   }
 
   Stream<Uint8List> _chunkBytes(Uint8List bytes) async* {
-    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
-      final end = (offset + chunkSize > bytes.length)
-          ? bytes.length
-          : offset + chunkSize;
+    final size = frameSize;
+    for (var offset = 0; offset < bytes.length; offset += size) {
+      final end = (offset + size > bytes.length) ? bytes.length : offset + size;
       yield bytes.sublist(offset, end);
     }
   }
 
   Future<void> _waitForSendCapacity() async {
+    if (useTransferPacing) {
+      // Mobile/native WebRTC stacks often report stale bufferedAmount.
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      return;
+    }
+
     while ((dataChannel.bufferedAmount ?? 0) > maxBuffered) {
       final completer = Completer<void>();
       Timer? pollTimer;
