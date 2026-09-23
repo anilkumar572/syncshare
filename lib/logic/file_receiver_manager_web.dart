@@ -45,6 +45,11 @@ class FileReceiverManager {
       onMeta?.call(_fileName!, _totalSize);
       onStatusUpdate(0.0, 'Receiving $_fileName...', null);
     } else if (data['type'] == 'eof') {
+      onStatusUpdate(
+        _totalSize > 0 ? (_receivedSize / _totalSize).clamp(0.0, 1.0) : 1.0,
+        'Finalizing download...',
+        null,
+      );
       final bytes = _webBuffer.toBytes();
       _lastBytes = bytes;
 
