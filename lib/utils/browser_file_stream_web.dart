@@ -94,7 +94,7 @@ Stream<List<int>> _streamBrowserFile(web.File file, int chunkSize) async* {
 
   while (offset < total) {
     final end = min(offset + chunkSize, total);
-    final slice = file.slice(offset.toJS, end.toJS);
+    final slice = file.slice(offset, end);
     yield await _readBlob(slice);
     offset = end;
   }
