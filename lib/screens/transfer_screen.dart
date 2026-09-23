@@ -1,5 +1,4 @@
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -247,7 +246,7 @@ class _TransferScreenState extends State<TransferScreen>
   }
 
   Future<void> _startTransfer() async {
-    final result = await FilePicker.platform.pickFiles(withReadStream: !kIsWeb);
+    final result = await FilePicker.platform.pickFiles(withReadStream: true);
 
     if (result == null || _dataChannel == null) {
       return;
@@ -271,16 +270,19 @@ class _TransferScreenState extends State<TransferScreen>
     try {
       final manager = FileTransferManager(_dataChannel!);
 
-      if (kIsWeb) {
-        final bytes = picked.bytes;
-        if (bytes == null) {
-          throw StateError('Could not read selected file on web');
-        }
-        await manager.sendFromBytes(bytes, picked.name, _updateProgress);
+      if (picked.readStream != null) {
+        await manager.sendFromStream(
+          picked.readStream!,
+          picked.size,
+          picked.name,
+          _updateProgress,
+        );
       } else if (picked.path != null) {
         await sendFileFromDisk(_dataChannel!, picked.path!, _updateProgress);
+      } else if (picked.bytes != null) {
+        await manager.sendFromBytes(picked.bytes!, picked.name, _updateProgress);
       } else {
-        throw StateError('Could not access selected file path');
+        throw StateError('Could not read selected file');
       }
 
       setState(() {
