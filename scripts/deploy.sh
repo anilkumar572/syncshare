@@ -51,9 +51,45 @@ setup_service_account() {
   return 1
 }
 
+print_rules_iam_help() {
+  if [[ -f "$ROOT_DIR/scripts/print-firebase-deploy-identity.js" ]]; then
+    node "$ROOT_DIR/scripts/print-firebase-deploy-identity.js" --iam-help || true
+    return
+  fi
+
+  cat <<'EOF'
+
+Firestore rules deploy failed with permission denied (HTTP 403).
+
+The GitHub/Firebase service account can deploy Hosting but also needs
+Firebase Rules permissions on project sharesync-56711.
+
+Grant roles/firebaserules.admin (or roles/firebase.admin) here:
+  https://console.cloud.google.com/iam-admin/iam?project=sharesync-56711
+
+EOF
+}
+
 deploy() {
   echo "Deploying to Firebase ($DEPLOY_TARGETS)..."
-  "$FIREBASE_BIN" deploy --only "$DEPLOY_TARGETS"
+  if node "$ROOT_DIR/scripts/print-firebase-deploy-identity.js" 2>/dev/null; then
+    echo ""
+  fi
+
+  set +e
+  local output
+  output="$("$FIREBASE_BIN" deploy --only "$DEPLOY_TARGETS" 2>&1)"
+  local status=$?
+  set -e
+
+  echo "$output"
+
+  if [[ $status -ne 0 ]]; then
+    if [[ "$output" == *"firebaserules.googleapis.com"* && "$output" == *"403"* ]]; then
+      print_rules_iam_help
+    fi
+    exit $status
+  fi
 }
 
 if setup_service_account; then
